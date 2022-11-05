@@ -1,0 +1,182 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{minted}
+\usepackage{hyperref}
+
+\setminted{linenos,breaklines}
+
+\title{CS 410 Technology Review: Topic Discovery with MeTA in a Docker environment}
+\author{Hao Mou (haomou2)}
+\date{Fall, 2022}
+
+\begin{document}
+
+\maketitle
+
+The goal of this review is to demonstrate topic discovery with MeTA\textsuperscript{1},
+a modern C++ data sciences toolkit, in a Docker environment.
+We will first go through the steps of setting up MeTA in a Docker container.
+Then, we will follow the guide\textsuperscript{2} on the MeTA website to run LDA
+over an example corpus.
+
+\section{Set up MeTA in Docker}
+
+MeTA is a C++ toolkit, which means you will need to compile it first before using it.
+However, the availability, naming, and usage of C++ build tools differ from platform to platform
+and sometimes from one version to another of the same platform.
+This complicates the build process and, if we stick with native builds, restricts the applicability
+of this review.
+
+Docker build circumvents this restriction by ``packaging'' the environment of a specific version
+of a platform into an image that can run on all compatible platforms.
+This gives us a reproducible build and runtime environment where we can build and run MeTA.
+
+\subsection{Build the Docker Image}
+
+For this review, we will be packaging MeTA into a Docker image based on Ubuntu 14.04 official
+image\textsuperscript{3} (ubuntu:trusty), which could run on MacOS, Linux, and other
+compatible platforms. The image is described by the following Dockerfile.
+Note that we have updated the url to the ICU package\textsuperscript{4},
+as the orginal link is no longer valid.
+
+\begin{minted}{docker}
+FROM ubuntu:trusty
+RUN apt-get update && apt-get install -y software-properties-common &&\
+    add-apt-repository ppa:george-edison55/cmake-3.x && apt-get update &&\
+    apt-get install -y g++ cmake libicu-dev git libjemalloc-dev zlib1g-dev &&\
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch v3.0.2 https://github.com/meta-toolkit/meta.git &&\
+    cd meta && git submodule update --init --recursive
+WORKDIR meta
+RUN sed -i 's,http://download.icu-project.org/files/icu4c/58.2/,'\
+'https://github.com/unicode-org/icu/releases/download/release-58-2/,' CMakeLists.txt &&\
+    mkdir build && cd build && cp ../config.toml . &&\
+    cmake ../ -DCMAKE_BUILD_TYPE=Release && make
+WORKDIR /meta/build
+\end{minted}
+
+To build the image, we will run the following command inside the terminal of a machine that
+has Docker installed and running.
+The Dockerfile is in the working directory.
+We will tag the image as \verb,meta, in our example.
+
+\begin{minted}{text}
+$ docker build --tag meta .
+\end{minted}
+
+\subsection{Run the Image as a Container}
+
+Once we have the image, we can run it as a container using the following command.
+We will name the container \verb,tmp, for now.
+
+\begin{minted}{text}
+$ docker run --name tmp -it meta
+\end{minted}
+
+This should start a container running the image we have just built and then attach a terminal to
+the container. We will be greeted by the prompt of the default shell.
+We can confirm the system is working by running MeTA's unit tests.
+
+\begin{minted}{text}
+> ./unit-test --reporter=spec
+\end{minted}
+
+\section{Topic Discovery with MeTA}
+
+With MeTA set up inside a Docker container, we can now follow the Topic Models
+Tutorial\textsuperscript{2} and find some topics!
+Specifically, we will run the topic modeling application bundled with MeTA to apply LDA to the
+corpus to produce a \verb,.phi, file that stores $P(w|z)$ for each $(w,z)$.
+Then, we will use the bundled \verb,./lda-topics, tool to report the top words in each found topic.
+
+First, let's examine the LDA section in the default \verb,config.toml, in the MeTA project.
+You can see we are using Gibbs Sampling\textsuperscript{5} here.
+You can also specify \verb,cvb, for Collapsed Variational Bayes\textsuperscript{6}
+or \verb,pargibbs, for Parallel Gibbs Sampling\textsuperscript{7}.
+The maximum number of iterations is set to 1000 so that \verb,lda, will stop once it converges
+or it has run 1000 iterations, whichever comes first.
+We set the number of topics to 4.
+
+\begin{minted}{toml}
+[lda]
+inference = "gibbs"
+max-iters = 1000
+alpha = 1.0
+beta = 1.0
+topics = 4
+model-prefix = "lda-model"
+\end{minted}
+
+The corpus in this case is the \verb,ceeaus, dataset bundled with MeTA.
+We can run LDA on it by running the following command.
+
+\begin{minted}{text}
+> ./lda config.toml
+...
+Iteration 264 log likelihood (log P(W|Z)): -643071                               
+ Found convergence after 264 iterations!
+1667651692: [info]     Finished maximum iterations, or found convergence! (/meta/src/topics/lda_gibbs.cpp:78)
+\end{minted}
+
+LDA in this case converges in 264 iterations.
+We can examine the top 5 words in the 4 topics we have found by running the following:
+
+\begin{minted}{text}
+> ./lda-topics config.toml lda-model.phi 5
+Topic 0:
+-----------------------
+right (3088): 0.017068
+educ (1125): 0.0168412
+believ (331): 0.0168016
+busi (459): 0.0152975
+financi (1371): 0.0143164
+
+Topic 1:
+-----------------------
+pass (2646): 0.0072825
+demerit (916): 0.00628473
+suicid (3589): 0.00420504
+pub (2882): 0.00420504
+foreign (1420): 0.00395189
+
+Topic 2:
+-----------------------
+</s> (0): 0.352298
+<s> (1): 0.329171
+job (1970): 0.213573
+part (2637): 0.17553
+time (3761): 0.164785
+
+Topic 3:
+-----------------------
+smoke (3343): 0.543953
+</s> (0): 0.364234
+<s> (1): 0.340936
+restaur (3047): 0.190615
+smoker (3348): 0.10802
+
+\end{minted}
+
+\section{Closing Remarks}
+
+In this review, we have showcased how to set up MeTA in a Docker container.
+By using containerized MeTA, we no longer need to worry about the difference in build and
+runtime environment.
+We have also demonstrated finding topics using LDA with MeTA.
+The config based approach is straightforward and friendly to iterative parameter tuning.
+The ease of use of the config based approach and the pull and use provided by Docker makes
+MeTA an approachable and powerful tool for topic discovery.
+
+\section{Reference}
+
+\begin{enumerate}
+\item \href{https://meta-toolkit.org/}{MeTA}
+\item \href{https://meta-toolkit.org/topic-models-tutorial.html}{MeTA Topic Models Tutorial}
+\item \href{https://hub.docker.com/_/ubuntu}{Ubuntu official image}
+\item \href{https://github.com/unicode-org/icu}{ICU}
+\item \href{https://meta-toolkit.org/doxygen/classmeta_1_1topics_1_1lda__gibbs.html}{MeTA Gibbs Sampling}
+\item \href{https://meta-toolkit.org/doxygen/classmeta_1_1topics_1_1lda__cvb.html}{MeTA Collapsed Variational Bayes}
+\item \href{https://meta-toolkit.org/doxygen/classmeta_1_1topics_1_1parallel__lda__gibbs.html}{MeTA Parallel Gibbs Sampling}
+\end{enumerate}
+
+\end{document}
